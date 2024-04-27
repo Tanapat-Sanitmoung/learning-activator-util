@@ -1,10 +1,23 @@
+using System.Runtime.CompilerServices;
+using Microsoft.AspNetCore.Mvc;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-builder.Services.AddScoped<Fooer>();
+
+builder.Services.AddTransient<IMessagePrinter, MessagePrinter>();
+builder.Services.AddTransient<IMessageBag, DefaultMessageBag>();
+
+builder.Services.AddTransient<FooFighterFactory>();
+builder.Services.AddTransient<FooMessageBag>();
+
+builder.Services.AddTransient(sp => {
+    var factory = sp.GetRequiredService<FooFighterFactory>();
+    return factory.Create();
+});
 
 var app = builder.Build();
 
@@ -17,49 +30,95 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-app.MapGet("/test", (IServiceProvider services) =>
+app.MapGet("/test", ([FromServices]FooFighter fooFighter) =>
 {
-    var fighter = (IFooFighter)ActivatorUtilities.CreateInstance(
-        services, typeof(IFooFighter), ["hi", 1, "there", true]);
-
-        fighter.CallFooer();
-
-        /*
-        OUTPUT:
-            a => 1
-            b => hi
-            c => True
-            d => there
-        */
+    fooFighter.DoMagic();
+    //Output: Default message for: Magic
 })
 .WithName("test")
 .WithOpenApi();
 
+app.MapGet("/test2", ([FromServices]IMessagePrinter printer) => {
+
+    printer.Print("Magic");
+    //Output: Custom message for: Magic
+})
+.WithName("test2")
+.WithOpenApi();
+
 app.Run();
 
-class Fooer
+public class FooFighter
 {
-    public void DoItsJob()
+    private readonly IMessagePrinter _massagePrinter;
+
+    public FooFighter(IMessagePrinter messagePrinter)
     {
-        Console.WriteLine("It is my duty");
+        _massagePrinter = messagePrinter;
+    }
+
+    public void DoMagic()
+    {
+        _massagePrinter.Print("Magic");
     }
 }
 
-class IFooFighter
+public interface IMessagePrinter 
 {
-    private readonly Fooer _fooer;
+    void Print(string key);
+}
 
-    public IFooFighter(int a, string b, bool c, string d, Fooer fooer)
+public class MessagePrinter : IMessagePrinter
+{
+    private readonly IMessageBag _messageBag;
+
+    public MessagePrinter(IMessageBag messageBag)
     {
-        Console.WriteLine("a => {0}", a);
-        Console.WriteLine("b => {0}", b);
-        Console.WriteLine("c => {0}", c);
-        Console.WriteLine("d => {0}", d);
-        _fooer = fooer;
+        _messageBag = messageBag;
     }
 
-    public void CallFooer()
+    public void Print(string key)
     {
-        _fooer.DoItsJob();
+        var msg = _messageBag.Get(key);
+        Console.WriteLine(msg);
+    }
+}
+
+public interface IMessageBag
+{
+    string Get(string key);
+}
+
+public class FooFighterFactory
+{
+    private readonly IServiceProvider _serviceProvider;
+
+    public FooFighterFactory(IServiceProvider serviceProvider)
+    {
+        _serviceProvider = serviceProvider;
+    }
+
+    public FooFighter Create()
+    {
+        var msgBag = _serviceProvider.GetRequiredService<FooMessageBag>();
+        var msgPrinter = ActivatorUtilities.CreateInstance<MessagePrinter>(_serviceProvider, [msgBag]);
+        return ActivatorUtilities.CreateInstance<FooFighter>(_serviceProvider, [msgPrinter]);
+    }
+}
+
+
+public class DefaultMessageBag : IMessageBag
+{
+    public string Get(string key)
+    {
+        return $"Default message for: {key}";
+    }
+}
+
+public class FooMessageBag : IMessageBag
+{
+    public string Get(string key)
+    {
+        return $"Custom message for: {key}";
     }
 }
