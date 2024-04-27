@@ -1,5 +1,7 @@
+using System.Collections;
 using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -8,16 +10,9 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-builder.Services.AddTransient<IMessagePrinter, MessagePrinter>();
-builder.Services.AddTransient<IMessageBag, DefaultMessageBag>();
-
-builder.Services.AddTransient<FooFighterFactory>();
-builder.Services.AddTransient<FooMessageBag>();
-
-builder.Services.AddTransient(sp => {
-    var factory = sp.GetRequiredService<FooFighterFactory>();
-    return factory.Create();
-});
+builder.Services.AddMessagePrinter();
+builder.Services.AddMessagePrinter<FooFighter>(() => typeof(FooMessageBag));
+builder.Services.AddMessagePrinter<NonFooFighter>(() => typeof(NonFooMessageBag));
 
 var app = builder.Build();
 
@@ -30,20 +25,26 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-app.MapGet("/typed", ([FromServices]FooFighter fooFighter) =>
+
+app.MapGet("/default", ([FromServices] IMessagePrinter printer) =>
 {
-    return fooFighter.DoMagic();
-    //Output: Custom message for: Magic
-})
-.WithName("typed")
-.WithOpenApi();
-
-app.MapGet("/default", ([FromServices]IMessagePrinter printer) => {
-
     return printer.Print("Magic");
-    //Output: Default message for: Magic
 })
 .WithName("default")
+.WithOpenApi();
+
+app.MapGet("/foo", ([FromServices] FooFighter fooFighter) =>
+{
+    return fooFighter.DoMagic();
+})
+.WithName("foo")
+.WithOpenApi();
+
+app.MapGet("/non-foo", ([FromServices] NonFooFighter nonFooFighter) =>
+{
+    return nonFooFighter.DoSomethingElse();
+})
+.WithName("non-foo")
 .WithOpenApi();
 
 app.Run();
@@ -63,7 +64,22 @@ public class FooFighter
     }
 }
 
-public interface IMessagePrinter 
+public class NonFooFighter
+{
+    private readonly IMessagePrinter _messagePrinter;
+
+    public NonFooFighter(IMessagePrinter messagePrinter)
+    {
+        _messagePrinter = messagePrinter;
+    }
+
+    public string DoSomethingElse()
+    {
+        return _messagePrinter.Print("SomethingElse");
+    }
+}
+
+public interface IMessagePrinter
 {
     string Print(string key);
 }
@@ -119,6 +135,62 @@ public class FooMessageBag : IMessageBag
 {
     public string Get(string key)
     {
-        return $"Custom message for: {key}";
+        return $"Foo message for: {key}";
     }
+}
+
+public class NonFooMessageBag : IMessageBag
+{
+    public string Get(string key)
+    {
+        return $"NonFoo message for: {key}";
+    }
+}
+
+public static class DependencyInjectionExtensions
+{
+    public static IServiceCollection AddMessagePrinter(this IServiceCollection services)
+    {
+        services.TryAddTransient<IMessagePrinter, MessagePrinter>();
+        services.TryAddTransient<IMessageBag, DefaultMessageBag>();
+        return services;
+    }
+
+    public static IServiceCollection AddMessagePrinter<TInstance>(this IServiceCollection services, Func<Type> opt)
+         where TInstance : class
+    {
+        services.AddMessagePrinter();
+
+        var bagType = opt.Invoke();
+
+        var bagDescriptor = new ServiceDescriptor(
+            serviceType: bagType,
+            implementationType: bagType,
+            lifetime: ServiceLifetime.Transient
+        );
+
+        services.TryAdd(bagDescriptor);
+
+        var serviceType = typeof(TInstance);
+        var serviceDescriptor = new ServiceDescriptor(
+            serviceType: serviceType,
+            factory: (sp) =>
+            {
+                var bag = sp.GetRequiredService(bagType);
+                var printer = ActivatorUtilities.CreateInstance(sp, typeof(MessagePrinter), [bag]);
+                return ActivatorUtilities.CreateInstance(sp, serviceType, [printer]);
+            },
+            lifetime: ServiceLifetime.Transient
+        );
+
+        services.TryAdd(serviceDescriptor);
+
+
+        return services;
+    }
+}
+
+public class DefaultMessageFactory
+{
+
 }
