@@ -30,20 +30,20 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-app.MapGet("/test", ([FromServices]FooFighter fooFighter) =>
+app.MapGet("/typed", ([FromServices]FooFighter fooFighter) =>
 {
     fooFighter.DoMagic();
-    //Output: Default message for: Magic
-})
-.WithName("test")
-.WithOpenApi();
-
-app.MapGet("/test2", ([FromServices]IMessagePrinter printer) => {
-
-    printer.Print("Magic");
     //Output: Custom message for: Magic
 })
-.WithName("test2")
+.WithName("typed")
+.WithOpenApi();
+
+app.MapGet("/default", ([FromServices]IMessagePrinter printer) => {
+
+    printer.Print("Magic");
+    //Output: Default message for: Magic
+})
+.WithName("default")
 .WithOpenApi();
 
 app.Run();
