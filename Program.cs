@@ -1,5 +1,3 @@
-using System.Collections;
-using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -11,8 +9,15 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 builder.Services.AddMessagePrinter();
-builder.Services.AddMessagePrinter<FooFighter>(() => typeof(FooMessageBag));
-builder.Services.AddMessagePrinter<NonFooFighter>(() => typeof(NonFooMessageBag));
+builder.Services.AddMessagePrinter<FooFighter>(
+    (cfg) => cfg.UseMassageBag<FooMessageBag>());
+
+builder.Services.AddMessagePrinter<NonFooFighter>(
+    (cfg) => cfg.UseMassageBag<NonFooMessageBag>());
+
+builder.Services.AddMessagePrinter<IFooWorker, FooWorker>(
+    (cfg) => cfg.UseMassageBag<FooWorkerMessageBag>()
+);
 
 var app = builder.Build();
 
@@ -47,6 +52,14 @@ app.MapGet("/non-foo", ([FromServices] NonFooFighter nonFooFighter) =>
 .WithName("non-foo")
 .WithOpenApi();
 
+app.MapGet("/foo-worker", ([FromServices] IFooWorker worker) =>
+{
+    return worker.DoWork();
+})
+.WithName("foo-worker")
+.WithOpenApi();
+
+
 app.Run();
 
 public class FooFighter
@@ -76,6 +89,34 @@ public class NonFooFighter
     public string DoSomethingElse()
     {
         return _messagePrinter.Print("SomethingElse");
+    }
+}
+
+public interface IFooWorker
+{
+    string DoWork();
+}
+
+public class FooWorker : IFooWorker
+{
+    private readonly IMessagePrinter _messagePrinter;
+
+    public FooWorker(IMessagePrinter messagePrinter)
+    {
+        _messagePrinter = messagePrinter;
+    }
+
+    public string DoWork()
+    {
+        return _messagePrinter.Print("DoWork");
+    }
+}
+
+public class FooWorkerMessageBag : IMessageBag
+{
+    public string Get(string key)
+    {
+        return $"{nameof(FooWorkerMessageBag)} handle {key}";
     }
 }
 
@@ -156,41 +197,70 @@ public static class DependencyInjectionExtensions
         return services;
     }
 
-    public static IServiceCollection AddMessagePrinter<TInstance>(this IServiceCollection services, Func<Type> opt)
+    public static IServiceCollection AddMessagePrinter<TInstance>(this IServiceCollection services, Action<MessagePrinterConfiguration> config)
          where TInstance : class
+    {
+        return services.AddMessagePrinter<TInstance, TInstance>(config);
+    }
+
+    public static IServiceCollection AddMessagePrinter<IServiceType, IImplementType>(
+            this IServiceCollection services, 
+            Action<MessagePrinterConfiguration> config
+        )
+        where IImplementType : class, IServiceType
     {
         services.AddMessagePrinter();
 
-        var bagType = opt.Invoke();
+        var cfg = new MessagePrinterConfiguration();
+        config.Invoke(cfg);
 
-        var bagDescriptor = new ServiceDescriptor(
-            serviceType: bagType,
-            implementationType: bagType,
-            lifetime: ServiceLifetime.Transient
-        );
+        var bagType = cfg.MessageBagType;
+        var serviceType = typeof(IServiceType);
+        var serviceImplementType = typeof(IImplementType);
 
-        services.TryAdd(bagDescriptor);
+        if (bagType is null)
+        {
+            services.TryAdd(
+                new ServiceDescriptor(
+                    serviceType: serviceType,
+                    implementationType: serviceImplementType,
+                    lifetime: ServiceLifetime.Scoped));
 
-        var serviceType = typeof(TInstance);
-        var serviceDescriptor = new ServiceDescriptor(
-            serviceType: serviceType,
-            factory: (sp) =>
-            {
-                var bag = sp.GetRequiredService(bagType);
-                var printer = ActivatorUtilities.CreateInstance(sp, typeof(MessagePrinter), [bag]);
-                return ActivatorUtilities.CreateInstance(sp, serviceType, [printer]);
-            },
-            lifetime: ServiceLifetime.Transient
-        );
+            return services;
+        }
+        else
+        {
+            services.TryAdd(new ServiceDescriptor(
+                serviceType: bagType,
+                implementationType: bagType,
+                lifetime: ServiceLifetime.Transient
+            ));
 
-        services.TryAdd(serviceDescriptor);
+            var serviceDescriptor = new ServiceDescriptor(
+                    serviceType: serviceType,
+                    factory: (sp) =>
+                    {
+                        var bag = sp.GetRequiredService(bagType);
+                        var printer = ActivatorUtilities.CreateInstance(sp, typeof(MessagePrinter), [bag]);
+                        return ActivatorUtilities.CreateInstance(sp, serviceImplementType, [printer]);
+                    },
+                    lifetime: ServiceLifetime.Transient
+                );
+
+            services.TryAdd(serviceDescriptor);
+        }
 
 
         return services;
     }
 }
 
-public class DefaultMessageFactory
+public class MessagePrinterConfiguration
 {
+    public Type? MessageBagType { get; private set; }
 
+    public void UseMassageBag<TBag>() where TBag : class, IMessageBag
+    {
+        MessageBagType = typeof(TBag);
+    }
 }
