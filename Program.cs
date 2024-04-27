@@ -32,7 +32,7 @@ app.UseHttpsRedirection();
 
 app.MapGet("/typed", ([FromServices]FooFighter fooFighter) =>
 {
-    fooFighter.DoMagic();
+    return fooFighter.DoMagic();
     //Output: Custom message for: Magic
 })
 .WithName("typed")
@@ -40,7 +40,7 @@ app.MapGet("/typed", ([FromServices]FooFighter fooFighter) =>
 
 app.MapGet("/default", ([FromServices]IMessagePrinter printer) => {
 
-    printer.Print("Magic");
+    return printer.Print("Magic");
     //Output: Default message for: Magic
 })
 .WithName("default")
@@ -57,15 +57,15 @@ public class FooFighter
         _massagePrinter = messagePrinter;
     }
 
-    public void DoMagic()
+    public string DoMagic()
     {
-        _massagePrinter.Print("Magic");
+        return _massagePrinter.Print("Magic");
     }
 }
 
 public interface IMessagePrinter 
 {
-    void Print(string key);
+    string Print(string key);
 }
 
 public class MessagePrinter : IMessagePrinter
@@ -77,10 +77,10 @@ public class MessagePrinter : IMessagePrinter
         _messageBag = messageBag;
     }
 
-    public void Print(string key)
+    public string Print(string key)
     {
         var msg = _messageBag.Get(key);
-        Console.WriteLine(msg);
+        return msg;
     }
 }
 
